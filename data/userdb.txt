@@ -1,5 +1,11 @@
-root:x:!root
-root:x:!123456
+root:x:root
+root:x:123456
+root:x:!@
+root:x:admin
+root:x:1234567890
+root:x:1234
+root:x:password
+root:x:support
 root:x:*
 richard:x:*
 richard:x:fout

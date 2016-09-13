@@ -1,3 +1,0 @@
-[submodule "cowrie/output/donthackme_output"]
-	path = cowrie/output/donthackme_output
-	url = git@github.com:donthack-me/donthackme_output.git

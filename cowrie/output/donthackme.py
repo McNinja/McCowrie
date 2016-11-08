@@ -83,7 +83,7 @@ class Output(cowrie.core.output.Output):
     def refresh_token(self):
         """If token is close to expiry, retrieve new."""
         if self.expires and \
-           self.expires < datetime.utcnow() + timedelta(minutes=10):
+           self.expires > datetime.utcnow() + timedelta(minutes=10):
             return
 
         agent_string = "Donthack.Me Cowrie Output Plugin v0.1, User: {0}"

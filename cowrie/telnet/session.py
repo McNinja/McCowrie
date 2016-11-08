@@ -18,6 +18,11 @@ from cowrie.core import protocol as cproto
 from cowrie.insults import insults
 
 class HoneyPotTelnetSession(TelnetBootstrapProtocol):
+    """
+    """
+
+    id = 0 # telnet can only have 1 simultaneous session, unlike SSH
+    windowSize = [40, 80]
 
     def __init__(self, username, server):
         self.username = username
@@ -37,6 +42,7 @@ class HoneyPotTelnetSession(TelnetBootstrapProtocol):
         self.environ = {
             'LOGNAME': self.username,
             'USER': self.username,
+            'SHELL': '/bin/bash',
             'HOME': self.home,
             'TMOUT': '1800'}
 

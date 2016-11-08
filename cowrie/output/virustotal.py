@@ -35,8 +35,11 @@ from zope.interface import implementer
 
 import json
 import os
-import urllib
-import urlparse
+try:
+    from urllib.parse import urlparse, urlencode
+except ImportError:
+    from urllib import urlencode
+    from urlparse import urlparse
 
 from twisted.python import log
 from twisted.web.iweb import IBodyProducer
@@ -78,7 +81,7 @@ class Output(cowrie.core.output.Output):
             self.posturl(entry["url"])
 
             log.msg("Sending file to VT")
-            p = urlparse.urlparse(entry["url"]).path
+            p = urlparse(entry["url"]).path
             if p == "":
                 fileName = entry["shasum"]
             else:
@@ -131,7 +134,7 @@ class Output(cowrie.core.output.Output):
                 d.addErrback(cbPartial)
                 return d
             else:
-                log.msg("VT Request failed: %s %s" % (response.code, response.phrase,))
+                log.msg("VT Request failed: {} {}".format(response.code, response.phrase))
                 return
 
 
@@ -140,14 +143,12 @@ class Output(cowrie.core.output.Output):
 
 
         def processResult(result):
-            log.msg( "VT postfile result: %s" % result)
+            log.msg( "VT postfile result: {}".format(result))
             j = json.loads(result)
-            #log.msg( "VT postfile result: %s", repr(j) )
             if j["response_code"] == 0:
                 log.msg( "response=0: posting comment")
                 d = self.postcomment(j["resource"])
                 return d
-
 
         d.addCallback(cbResponse)
         d.addErrback(cbError)
@@ -166,7 +167,7 @@ class Output(cowrie.core.output.Output):
         vtUrl = "https://www.virustotal.com/vtapi/v2/url/scan"
         headers = http_headers.Headers({'User-Agent': ['Cowrie SSH Honeypot']})
         fields = {"apikey": self.apiKey, "url": scanUrl}
-        data = urllib.urlencode(fields)
+        data = urlencode(fields)
         body = StringProducer(data)
         contextFactory = WebClientContextFactory()
 
@@ -192,7 +193,7 @@ class Output(cowrie.core.output.Output):
                 d.addErrback(cbPartial)
                 return d
             else:
-                log.msg("VT Request failed: %s %s" % (response.code, response.phrase,))
+                log.msg("VT Request failed: {} {}".format(response.code, response.phrase))
                 return
 
 
@@ -202,16 +203,16 @@ class Output(cowrie.core.output.Output):
 
         def processResult(result):
             j = json.loads(result)
-            log.msg( "VT posturl result: %s", repr(j) )
+            log.msg("VT posturl result: {}".format(repr(j)))
             if j["response_code"] == 0:
                 log.msg( "response=0: posting comment")
                 d = self.postcomment(j["resource"])
                 return d
 
-
         d.addCallback(cbResponse)
         d.addErrback(cbError)
         return d
+
 
     def postcomment(self, resource):
         """
@@ -222,7 +223,7 @@ class Output(cowrie.core.output.Output):
                        "comment": "First seen by Cowrie SSH honeypot http://github.com/micheloosterhof/cowrie",
                        "apikey": self.apiKey}
         headers = http_headers.Headers({'User-Agent': ['Cowrie SSH Honeypot']})
-        data = urllib.urlencode(parameters)
+        data = urlencode(parameters)
         body = StringProducer(data)
         contextFactory = WebClientContextFactory()
 
@@ -247,7 +248,7 @@ class Output(cowrie.core.output.Output):
                 d.addErrback(cbPartial)
                 return d
             else:
-                log.msg("VT Request failed: %s %s" % (response.code, response.phrase,))
+                log.msg("VT Request failed: {} {}".format(response.code, response.phrase))
                 return
 
 
@@ -257,7 +258,7 @@ class Output(cowrie.core.output.Output):
 
         def processResult(result):
             j = json.loads(result)
-            log.msg( "VT postcomment result: %s", repr(j) )
+            log.msg( "VT postcomment result: {}".format(repr(j)))
             return j["response_code"]
 
         d.addCallback(cbResponse)
@@ -265,7 +266,10 @@ class Output(cowrie.core.output.Output):
         return d
 
 
+
 class WebClientContextFactory(ClientContextFactory):
+    """
+    """
     def getContext(self, hostname, port):
         return ClientContextFactory.getContext(self)
 
@@ -273,6 +277,8 @@ class WebClientContextFactory(ClientContextFactory):
 
 @implementer(IBodyProducer)
 class StringProducer(object):
+    """
+    """
 
     def __init__(self, body):
         self.body = body
@@ -290,6 +296,7 @@ class StringProducer(object):
 
     def stopProducing(self):
         pass
+
 
 
 def encode_multipart_formdata(fields, files):

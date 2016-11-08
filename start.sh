@@ -1,9 +1,11 @@
 #!/bin/sh
 AUTHBIND_ENABLED=no
+COWRIEDIR=$(dirname $0)
+PIDFILE="var/run/cowrie.pid"
+export PYTHONPATH=${PYTHONPATH}:${COWRIEDIR}
 
 set -e
-
-cd $(dirname $0)
+cd ${COWRIEDIR}
 
 if [ "$1" != "" ]
 then
@@ -28,7 +30,7 @@ fi
 echo "Starting cowrie with extra arguments [$XARGS] ..."
 if [ $AUTHBIND_ENABLED = "no" ]
 then
-    twistd $XARGS -l log/cowrie.log --umask 0077 --pidfile cowrie.pid cowrie
+    twistd $XARGS -l log/cowrie.log --umask 0077 --pidfile ${PIDFILE} cowrie
 else
     authbind --deep twistd $XARGS -l log/cowrie.log --umask 0077 --pidfile cowrie.pid cowrie
 fi

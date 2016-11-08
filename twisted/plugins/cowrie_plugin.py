@@ -37,7 +37,7 @@ from zope.interface import implementer
 import os
 import sys
 
-from twisted.python import usage
+from twisted.python import log, usage
 from twisted.plugin import IPlugin
 from twisted.application.service import IServiceMaker
 from twisted.application import internet, service
@@ -56,7 +56,7 @@ class Options(usage.Options):
     FIXME: Docstring
     """
     optParameters = [
-        ["port", "p", 0, "The port number to listen on.", int],
+        ["port", "p", 0, "The port number to listen on for SSH.", int],
         ["config", "c", 'cowrie.cfg', "The configuration file to use."]
         ]
 
@@ -70,6 +70,9 @@ class CowrieServiceMaker(object):
     tapname = "cowrie"
     description = "She sells sea shells by the sea shore."
     options = Options
+    dbloggers = None
+    output_plugins = None
+    cfg = None
 
     def makeService(self, options):
         """
@@ -82,50 +85,98 @@ class CowrieServiceMaker(object):
 
         cfg = readConfigFile(options["config"])
 
+        # ssh is enabled by default
+        if cfg.has_option('ssh', 'enabled') == False or \
+           (cfg.has_option('ssh', 'enabled') and \
+               cfg.getboolean('ssh', 'enabled') == True):
+            enableSSH = True
+        else:
+            enableSSH = False
+
+        # telnet is disabled by default
+        if cfg.has_option('telnet', 'enabled') and \
+                 cfg.getboolean('telnet', 'enabled') == True:
+            enableTelnet = True
+        else:
+            enableTelnet = False
+
+        if enableTelnet == False and enableSSH == False:
+            print('ERROR: You must at least enable SSH or Telnet')
+            sys.exit(1)
+
+        # Load db loggers
+        self.dbloggers = []
+        for x in cfg.sections():
+            if not x.startswith('database_'):
+                continue
+            engine = x.split('_')[1]
+            try:
+                dblogger = __import__( 'cowrie.dblog.{}'.format(engine),
+                    globals(), locals(), ['dblog']).DBLogger(cfg)
+                log.addObserver(dblogger.emit)
+                self.dbloggers.append(dblogger)
+                log.msg("Loaded dblog engine: {}".format(engine))
+            except:
+                log.err()
+                log.msg("Failed to load dblog engine: {}".format(engine))
+
+        # Load output modules
+        self.output_plugins = []
+        for x in cfg.sections():
+            if not x.startswith('output_'):
+                continue
+            engine = x.split('_')[1]
+            try:
+                output = __import__( 'cowrie.output.{}'.format(engine),
+                    globals(), locals(), ['output']).Output(cfg)
+                log.addObserver(output.emit)
+                self.output_plugins.append(output)
+                log.msg("Loaded output engine: {}".format(engine))
+            except:
+                log.err()
+                log.msg("Failed to load output engine: {}".format(engine))
+
         topService = service.MultiService()
         application = service.Application('cowrie')
         topService.setServiceParent(application)
 
-        factory = cowrie.ssh.factory.CowrieSSHFactory(cfg)
-
-        factory.portal = portal.Portal(core.realm.HoneyPotRealm(cfg))
-        factory.portal.registerChecker(
-            core.checkers.HoneypotPublicKeyChecker())
-        factory.portal.registerChecker(
-            core.checkers.HoneypotPasswordChecker(cfg))
-
-        if cfg.has_option('honeypot', 'auth_none_enabled') and \
-                 cfg.get('honeypot', 'auth_none_enabled').lower() in \
-                 ('yes', 'true', 'on'):
+        if enableSSH:
+            factory = cowrie.ssh.factory.CowrieSSHFactory(cfg)
+            factory.tac = self
+            factory.portal = portal.Portal(core.realm.HoneyPotRealm(cfg))
             factory.portal.registerChecker(
-                core.checkers.HoneypotNoneChecker())
+                core.checkers.HoneypotPublicKeyChecker())
+            factory.portal.registerChecker(
+                core.checkers.HoneypotPasswordChecker(cfg))
 
-        if cfg.has_option('ssh', 'listen_addr'):
-            listen_ssh_addr = cfg.get('ssh', 'listen_addr')
-        elif cfg.has_option('honeypot', 'listen_addr'):
-            listen_ssh_addr = cfg.get('honeypot', 'listen_addr')
-        else:
-            listen_ssh_addr = '0.0.0.0'
+            if cfg.has_option('honeypot', 'auth_none_enabled') and \
+                     cfg.getboolean('honeypot', 'auth_none_enabled') == True:
+                factory.portal.registerChecker(
+                    core.checkers.HoneypotNoneChecker())
 
-        # Preference: 1, option, 2, config, 3, default of 2222
-        if options['port'] != 0:
-            listen_ssh_port = int(options["port"])
-        elif cfg.has_option('ssh', 'listen_port'):
-            listen_ssh_port = int(cfg.get('ssh', 'listen_port'))
-        elif cfg.has_option('honeypot', 'listen_port'):
-            listen_ssh_port = int(cfg.get('honeypot', 'listen_port'))
-        else:
-            listen_ssh_port = 2222
+            if cfg.has_option('ssh', 'listen_addr'):
+                listen_ssh_addr = cfg.get('ssh', 'listen_addr')
+            elif cfg.has_option('honeypot', 'listen_addr'):
+                listen_ssh_addr = cfg.get('honeypot', 'listen_addr')
+            else:
+                listen_ssh_addr = '0.0.0.0'
 
-        for i in listen_ssh_addr.split():
-            svc = internet.TCPServer(listen_ssh_port, factory, interface=i)
-            # FIXME: Use addService on topService ?
-            svc.setServiceParent(topService)
+            # Preference: 1, option, 2, config, 3, default of 2222
+            if options['port'] != 0:
+                listen_ssh_port = int(options["port"])
+            elif cfg.has_option('ssh', 'listen_port'):
+                listen_ssh_port = cfg.getint('ssh', 'listen_port')
+            elif cfg.has_option('honeypot', 'listen_port'):
+                listen_ssh_port = cfg.getint('honeypot', 'listen_port')
+            else:
+                listen_ssh_port = 2222
 
-        if cfg.has_option('telnet', 'enabled') and \
-                 cfg.get('telnet', 'enabled').lower() in \
-                 ('yes', 'true', 'on'):
+            for i in listen_ssh_addr.split():
+                svc = internet.TCPServer(listen_ssh_port, factory, interface=i)
+                # FIXME: Use addService on topService ?
+                svc.setServiceParent(topService)
 
+        if enableTelnet:
             if cfg.has_option('telnet', 'listen_addr'):
                 listen_telnet_addr = cfg.get('telnet', 'listen_addr')
             else:
@@ -133,25 +184,21 @@ class CowrieServiceMaker(object):
 
             # Preference: 1, config, 2, default of 2223
             if cfg.has_option('telnet', 'listen_port'):
-                listen_telnet_port = int(cfg.get('telnet', 'listen_port'))
+                listen_telnet_port = cfg.getint('telnet', 'listen_port')
             else:
                 listen_telnet_port = 2223
 
             f = cowrie.telnet.transport.HoneyPotTelnetFactory(cfg)
+            f.tac = self
             f.portal = portal.Portal(core.realm.HoneyPotRealm(cfg))
             f.portal.registerChecker(core.checkers.HoneypotPasswordChecker(cfg))
-            if cfg.has_option('honeypot', 'auth_none_enabled') and \
-                     cfg.get('honeypot', 'auth_none_enabled').lower() in \
-                     ('yes', 'true', 'on'):
-                f.portal.registerChecker(core.checkers.HoneypotNoneChecker())
             for i in listen_telnet_addr.split():
                 tsvc = internet.TCPServer(listen_telnet_port, f, interface=i)
                 # FIXME: Use addService on topService ?
                 tsvc.setServiceParent(topService)
 
         if cfg.has_option('honeypot', 'interact_enabled') and \
-                 cfg.get('honeypot', 'interact_enabled').lower() in \
-                 ('yes', 'true', 'on'):
+                 cfg.getboolean('honeypot', 'interact_enabled') == True:
             iport = int(cfg.get('honeypot', 'interact_port'))
             # FIXME this doesn't support checking both Telnet and SSH sessions
             from cowrie.core import interact

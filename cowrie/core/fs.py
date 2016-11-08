@@ -65,6 +65,25 @@ class HoneyPotFilesystem(object):
         # Keep count of new files, so we can have an artificial limit
         self.newcount = 0
 
+        # Get the honeyfs path from the config file and explore it for file
+        # contents:
+        self.init_honeyfs(self.cfg.get('honeypot', 'contents_path'))
+
+
+    def init_honeyfs(self, honeyfs_path):
+        """
+        Explore the honeyfs at 'honeyfs_path' and set all A_REALFILE attributes on
+        the virtual filesystem.
+        """
+
+        for path, directories, filenames in os.walk(honeyfs_path):
+            for filename in filenames:
+                realfile_path = os.path.join(path, filename)
+                virtual_path = '/' + os.path.relpath(realfile_path, honeyfs_path)
+
+                f = self.getfile(virtual_path, follow_symlinks=False)
+                if f and f[A_TYPE] == T_FILE:
+                    self.update_realfile(f, realfile_path)
 
     def resolve_path(self, path, cwd):
         """
@@ -168,15 +187,6 @@ class HoneyPotFilesystem(object):
             f[A_REALFILE] = realfile
 
 
-    def realfile(self, f, path):
-        """
-        """
-        self.update_realfile(f, path)
-        if f[A_REALFILE]:
-            return f[A_REALFILE]
-        return None
-
-
     def getfile(self, path, follow_symlinks=True):
         """
         This returns the Cowrie file system object for a path
@@ -211,28 +221,25 @@ class HoneyPotFilesystem(object):
         return p
 
 
-    def file_contents(self, target, count=0):
+    def file_contents(self, target):
         """
         Retrieve the content of a file in the honeyfs
         It follows links.
         It tries A_REALFILE first and then tries honeyfs directory
         """
-        if count > 8:
-            raise TooManyLevels
         path = self.resolve_path(target, os.path.dirname(target))
         if not path or not self.exists(path):
             raise FileNotFound
         f = self.getfile(path)
         if f[A_TYPE] == T_DIR:
             raise IsADirectoryError
-        elif f[A_TYPE] == T_LINK:
-            return self.file_contents(f[A_TARGET], count + 1)
         elif f[A_TYPE] == T_FILE and f[A_REALFILE]:
             return file(f[A_REALFILE], 'rb').read()
-        realfile = self.realfile(f, '%s/%s' % \
-            (self.cfg.get('honeypot', 'contents_path'), path))
-        if realfile:
-            return file(realfile, 'rb').read()
+        elif f[A_TYPE] == T_FILE and f[A_SIZE] == 0:
+            # Zero-byte file lacking A_REALFILE backing: probably empty.
+            # (The exceptions to this are some system files in /proc and /sys,
+            # but it's likely better to return nothing than suspiciously fail.)
+            return ''
 
 
     def mkfile(self, path, uid, gid, size, mode, ctime=None):

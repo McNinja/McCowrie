@@ -34,7 +34,7 @@ class DBLogger(object):
             'cowrie.command.success': self.handleCommand,
             'cowrie.command.failed': self.handleUnknownCommand,
             'cowrie.session.file_download': self.handleFileDownload,
-            'cowrie.session.file_download': self.handleInput,
+            'cowrie.command.input': self.handleInput,
             'cowrie.client.version': self.handleClientVersion,
             'cowrie.client.size': self.handleTerminalSize,
             'cowrie.session.closed': self._connectionLost,
@@ -47,7 +47,7 @@ class DBLogger(object):
 
         self.report_public_ip = False
         if self.cfg.has_option('honeypot', 'report_public_ip'):
-            if cfg.get('honeypot', 'report_public_ip') == "true" or cfg.get('honeypot', 'report_public_ip') == "1":
+            if cfg.getboolean('honeypot', 'report_public_ip') == True:
                 self.report_public_ip = True
                 import urllib
                 self.public_ip = urllib.urlopen('http://myip.threatstream.com').readline()

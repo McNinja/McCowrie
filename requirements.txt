@@ -1,6 +1,9 @@
-twisted[conch]
+twisted>=15.2.1
 cryptography
 configparser
 pyopenssl
 gmpy2
 service_identity
+pycrypto
+python-dateutil
+tftpy

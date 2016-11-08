@@ -12,7 +12,7 @@ from twisted.python import log
 from twisted.internet import protocol
 from twisted.conch.telnet import AuthenticatingTelnetProtocol, ECHO, \
                                  ITelnetProtocol, ProtocolTransportMixin, \
-                                 SGA, TelnetTransport
+                                 SGA, NAWS, LINEMODE, TelnetTransport
 from twisted.protocols.policies import TimeoutMixin
 
 from cowrie.core.credentials import UsernamePasswordIP
@@ -22,6 +22,7 @@ class HoneyPotTelnetFactory(protocol.ServerFactory):
     This factory creates HoneyPotTelnetAuthProtocol instances
     They listen directly to the TCP port
     """
+    tac = None # gets set later
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -32,9 +33,10 @@ class HoneyPotTelnetFactory(protocol.ServerFactory):
         """
         Special delivery to the loggers to avoid scope problems
         """
-        for dblog in self.dbloggers:
+        args['sessionno'] = 'T'+str(args['sessionno'])
+        for dblog in self.tac.dbloggers:
             dblog.logDispatch(*msg, **args)
-        for output in self.output_plugins:
+        for output in self.tac.output_plugins:
             output.logDispatch(*msg, **args)
 
 
@@ -54,50 +56,17 @@ class HoneyPotTelnetFactory(protocol.ServerFactory):
         # For use by the uptime command
         self.starttime = time.time()
 
-        # Load db loggers
-        self.dbloggers = []
-        for x in self.cfg.sections():
-            if not x.startswith('database_'):
-                continue
-            engine = x.split('_')[1]
-            try:
-                dblogger = __import__( 'cowrie.dblog.{}'.format(engine),
-                    globals(), locals(), ['dblog']).DBLogger(self.cfg)
-                log.addObserver(dblogger.emit)
-                self.dbloggers.append(dblogger)
-                log.msg("Loaded dblog engine: {}".format(engine))
-            except:
-                log.err()
-                log.msg("Failed to load dblog engine: {}".format(engine))
-
-        # Load output modules
-        self.output_plugins = []
-        for x in self.cfg.sections():
-            if not x.startswith('output_'):
-                continue
-            engine = x.split('_')[1]
-            try:
-                output = __import__( 'cowrie.output.{}'.format(engine),
-                    globals(), locals(), ['output']).Output(self.cfg)
-                log.addObserver(output.emit)
-                self.output_plugins.append(output)
-                log.msg("Loaded output engine: {}".format(engine))
-            except:
-                log.err()
-                log.msg("Failed to load output engine: {}".format(engine))
-
         # hook protocol
         self.protocol = lambda: CowrieTelnetTransport(HoneyPotTelnetAuthProtocol,
                                          self.portal)
         protocol.ServerFactory.startFactory(self)
+        log.msg("Ready to accept Telnet connections")
 
 
     def stopFactory(self):
         """
         Stop output plugins
         """
-        for output in self.output_plugins:
-            output.stop()
         protocol.ServerFactory.stopFactory(self)
 
 
@@ -114,6 +83,11 @@ class HoneyPotTelnetAuthProtocol(AuthenticatingTelnetProtocol):
         """
         """
         self.factory.sessions[self.transport.transport.sessionno] = self.transport.transportId
+        
+        # Initial option negotation. Want something at least for Mirai
+        for opt in (ECHO,):
+            self.transport.do(opt).addErrback(log.err)
+
         # I need to doubly escape here since my underlying
         # CowrieTelnetTransport hack would remove it and leave just \n
         self.transport.write(self.factory.banner.replace('\n', '\r\r\n'))
@@ -191,6 +165,28 @@ class HoneyPotTelnetAuthProtocol(AuthenticatingTelnetProtocol):
         self.state = "User"
 
 
+    def enableLocal(self, opt):
+        if opt == ECHO:
+            return True
+        elif opt == SGA:
+            return True
+        else:
+            return False
+
+
+    def enableRemote(self, opt):
+        if opt == LINEMODE:
+            self.transport.requestNegotiation(LINEMODE, MODE + chr(TRAPSIG))
+            return True
+        elif opt == NAWS:
+            return True
+        elif opt == SGA:
+            return True
+        else:
+            return False
+
+
+
 class CowrieTelnetTransport(TelnetTransport, TimeoutMixin):
     """
     """
@@ -201,10 +197,10 @@ class CowrieTelnetTransport(TelnetTransport, TimeoutMixin):
         self.setTimeout(300)
 
         log.msg(eventid='cowrie.session.connect',
-           format='New connection: %(src_ip)s:%(src_port)s (%(dst_ip)s:%(dst_port)s) [session: %(sessionno)s]',
+           format='New connection: %(src_ip)s:%(src_port)s (%(dst_ip)s:%(dst_port)s) [session: T%(sessionno)s]',
            src_ip=self.transport.getPeer().host, src_port=self.transport.getPeer().port,
            dst_ip=self.transport.getHost().host, dst_port=self.transport.getHost().port,
-           session=self.transportId, sessionno=sessionno)
+           session=self.transportId, sessionno='T'+str(sessionno))
         TelnetTransport.connectionMade(self)
 
     def write(self, bytes):

@@ -51,7 +51,7 @@ data_path = data
 contents_path = honeyfs
 
 
-# File in the python pickle format containing the virtual filesystem.
+# File in the Python pickle format containing the virtual filesystem.
 #
 # This includes the filenames, paths, permissions for the Cowrie filesystem,
 # but not the file contents. This is created by the bin/createfs utility from
@@ -245,6 +245,11 @@ forward_redirect_25 = 127.0.0.1:12525
 forward_redirect_587 = 127.0.0.1:12525
 
 
+[ssh]
+
+# Enable SSH support, enabled by default
+enabled = true
+
 # ============================================================================
 # Telnet Specific Options
 # ============================================================================
@@ -353,8 +358,10 @@ logfile = log/cowrie.json
 
 
 # MySQL logging module
-# Identical functionality as [database_mysql] but with different internals
 # Database structure for this module is supplied in doc/sql/mysql.sql
+#
+# MySQL logging requires extra software: sudo apt-get install libmysqlclient-dev
+# MySQL logging requires an extra Python module: pip install mysql-python
 #
 #[output_mysql]
 #host = localhost
@@ -362,7 +369,17 @@ logfile = log/cowrie.json
 #username = cowrie
 #password = secret
 #port = 3306
+#debug = false
 
+# Rethinkdb output module
+# Rethinkdb output module requires extra Python module: pip install rethinkdb
+
+#[output_rethinkdblog]
+#host = 127.0.0.1
+#port = 28015
+#table = output
+#password =
+#db = cowrie
 
 # SQLite3 logging module
 #
@@ -400,7 +417,7 @@ logfile = log/cowrie.json
 
 # HPFeeds
 #
-#[database_hpfeeds]
+#[output_hpfeeds]
 #server = hpfeeds.mysite.org
 #port = 10000
 #identifier = abc123

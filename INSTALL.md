@@ -1,18 +1,17 @@
 
 # Installing Cowrie in seven steps.
 
-- [Installing Cowrie in seven steps.](#installing-cowrie-in-six-steps)
-  * [Step 1: Install required Python packages](#step-1--install-required-debian-packages)
-    + [Option A: dependencies for virtualenv](#option-a--dependencies-for-virtualenv)
-    + [Option B: dependencies for bare install](#option-b--dependencies-for-bare-install)
-  * [Step 2: Create a user account](#step-2--create-a-user-account)
-  * [Step 3: Checkout the code](#step-3--checkout-the-code)
-  * [Step 3: Setup virtualenv (if desired)](#step-3--setup-virtualenv--if-desired-)
-  * [Step 4: Install configuration file](#step-4--install-configuration-file)
-  * [Step 5: Generate a DSA key](#step-5--generate-a-dsa-key)
-  * [Step 6: Turning on cowrie](#step-6--turning-on-cowrie)
-  * [Step 7: Port redirection (optional)](#step-7--port-redirection--optional-)
-  * [Troubleshooting](#troubleshooting)
+* [Step 1: Install dependencies](#step-1-install-dependencies)
+    + [Option A: dependencies for virtualenv](#option-a-dependencies-for-virtualenv)
+    + [Option B: dependencies for bare install](#option-b-dependencies-for-bare-install)
+* [Step 2: Create a user account](#step-2-create-a-user-account)
+* [Step 3: Checkout the code](#step-3-checkout-the-code)
+* [Step 3: Setup virtualenv (if desired)](#step-3-setup-virtualenv-if-desired)
+* [Step 4: Install configuration file](#step-4-install-configuration-file)
+* [Step 5: Generate a DSA key](#step-5-generate-a-dsa-key)
+* [Step 6: Turning on cowrie](#step-6-turning-on-cowrie)
+* [Step 7: Port redirection (optional)](#step-7-port-redirection-optional)
+* [Troubleshooting](#troubleshooting)
 
 ## Step 1: Install dependencies
 
@@ -27,7 +26,7 @@ This install virtual environments and other dependencies. The actual python pack
 
 On Debian based systems (tested on Debian 8, 2016-08-30):
 ```
-$ sudo apt-get install git virtualenv libmpfr-dev libssl-dev libmpc-dev libffi-dev build-essential libpython-dev
+$ sudo apt-get install git virtualenv libmpfr-dev libssl-dev libmpc-dev libffi-dev build-essential libpython-dev python2.7-minimal
 ```
 
 ### Option B: dependencies for bare install
@@ -35,9 +34,9 @@ $ sudo apt-get install git virtualenv libmpfr-dev libssl-dev libmpc-dev libffi-d
 Install prerequisites on Debian based systems (untested 2016-08-30):
 
 ```
-$ sudo apt-get install git python-twisted python-configparser python-crypto python-pyasn1 python-gmpy2 python-mysqldb python-zope.interface
+$ sudo apt-get install git python-twisted python-configparser python-crypto python-pyasn1 python-gmpy2 python-mysqldb python-zope.interface python-service-identity
 ```
-**NOTE**: 'python-gmpy2' will cause a signficant delay when attempting to login to the fake ssh server if installed on a Raspberry Pi (Tested on a RPi model 1B). Use 'python-gmpy' to reduce the login delay significantly. 
+**NOTE**: 'python-gmpy2' will cause a signficant delay when attempting to login to the fake ssh server if installed on a Raspberry Pi (Tested on a RPi model 1B). Use 'python-gmpy' to reduce the login delay significantly.
 
 Install prerequisites on Alpine based systems (untested 2016-08-30):
 
@@ -166,6 +165,15 @@ $ chown cowrie:cowrie /etc/authbind/byport/22
 $ chmod 770 /etc/authbind/byport/22
 ```
 
+Or for telnet:
+
+```
+$ apt-get install authbind
+$ sudo touch /etc/authbind/byport/23
+$ sudo chown cowrie:cowrie /etc/authbind/byport/23
+$ sudo chmod 770 /etc/authbind/byport/23
+```
+
 * Edit start.sh and modify the AUTHBIND_ENABLED setting
 * Change listen_port to 22 in cowrie.cfg
 
@@ -185,6 +193,13 @@ This is caused by Twisted incompatibilities. A workaround is to run:
 ```
 $ cd cowrie/data
 $ ssh-keygen -t dsa -b 1024 -f ssh_host_dsa_key
+```
+
+* If there are issues creating the RSA keys, the following is a workaround:
+
+```
+$ cd cowrie/data
+$ ssh-keygen -t rsa -b 2048 -f ssh_host_rsa_key
 ```
 
 * If you see `twistd: Unknown command: cowrie` there are two

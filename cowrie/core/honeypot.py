@@ -5,6 +5,8 @@
 This module contains ...
 """
 
+from __future__ import division, absolute_import
+
 import os
 import re
 import stat
@@ -32,22 +34,40 @@ class HoneyPotCommand(object):
         self.errorWrite = self.protocol.pp.errReceived
         # MS-DOS style redirect handling, inside the command
         # TODO: handle >>, 2>, etc
-        if '>' in self.args:
+        if '>' in self.args or '>>' in self.args:
             self.writtenBytes = 0
             self.write = self.write_to_file
-            index = self.args.index(">")
+            if '>>' in self.args:
+                index = self.args.index('>>')
+                b_append = True
+            else:
+                index = self.args.index('>')
+                b_append = False
             self.outfile = self.fs.resolve_path(str(self.args[(index + 1)]), self.protocol.cwd)
             del self.args[index:]
-            self.safeoutfile = '%s/%s-%s-%s-redir_%s' % (
-                self.protocol.cfg.get('honeypot', 'download_path'),
-                time.strftime('%Y%m%d-%H%M%S'),
-                self.protocol.getProtoTransport().transportId,
-                self.protocol.terminal.transport.session.id,
-                re.sub('[^A-Za-z0-9]', '_', self.outfile))
-            perm = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
-            self.fs.mkfile(self.outfile, 0, 0, 0, stat.S_IFREG | perm)
-            with open(self.safeoutfile, 'a'):
-                self.fs.update_realfile(self.fs.getfile(self.outfile), self.safeoutfile)
+            p = self.fs.getfile(self.outfile)
+            if not p or not p[fs.A_REALFILE] or p[fs.A_REALFILE].startswith('honeyfs') or not b_append:
+                tmp_fname = '%s-%s-%s-redir_%s' % \
+                            (time.strftime('%Y%m%d-%H%M%S'),
+                             self.protocol.getProtoTransport().transportId,
+                             self.protocol.terminal.transport.session.id,
+                             re.sub('[^A-Za-z0-9]', '_', self.outfile))
+                self.safeoutfile = os.path.join(self.protocol.cfg.get('honeypot', 'download_path'), tmp_fname)
+                perm = stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
+                try:
+                    self.fs.mkfile(self.outfile, 0, 0, 0, stat.S_IFREG | perm)
+                except fs.FileNotFound:
+                    # The outfile locates at a non-existing directory.
+                    self.protocol.pp.outReceived('-bash: %s: No such file or directory\n' % self.outfile)
+                    self.write = self.write_to_failed
+                    self.outfile = None
+                    self.safeoutfile = None
+
+                else:
+                    with open(self.safeoutfile, 'ab'):
+                        self.fs.update_realfile(self.fs.getfile(self.outfile), self.safeoutfile)
+            else:
+                self.safeoutfile = p[fs.A_REALFILE]
 
 
     def check_arguments(self, application, args):
@@ -72,23 +92,29 @@ class HoneyPotCommand(object):
     def write_to_file(self, data):
         """
         """
-        with open(self.safeoutfile, 'a') as f:
+        with open(self.safeoutfile, 'ab') as f:
             f.write(data)
         self.writtenBytes += len(data)
         self.fs.update_size(self.outfile, self.writtenBytes)
 
 
+    def write_to_failed(self, data):
+        """
+        """
+        pass
+
     def start(self):
         """
         """
-        self.call()
+        if self.write != self.write_to_failed:
+            self.call()
         self.exit()
 
 
     def call(self):
         """
         """
-        self.write('Hello World! [%s]\n' % (repr(self.args),))
+        self.write(b'Hello World! [%s]\n' % (repr(self.args),))
 
 
     def exit(self):
@@ -96,9 +122,16 @@ class HoneyPotCommand(object):
         Sometimes client is disconnected and command exits after. So cmdstack is gone
         """
         try:
+            if self.protocol and self.protocol.terminal and hasattr(self, 'safeoutfile') and self.safeoutfile:
+                if hasattr(self, 'outfile') and self.outfile:
+                    self.protocol.terminal.redirFiles.add((self.safeoutfile, self.outfile))
+                else:
+                    self.protocol.terminal.redirFiles.add((self.safeoutfile, ''))
+
             self.protocol.cmdstack.pop()
-            self.protocol.cmdstack[-1].resume()
-        except AttributeError:
+            if len(self.protocol.cmdstack):
+                self.protocol.cmdstack[-1].resume()
+        except (AttributeError, IndexError):
             # Cmdstack could be gone already (wget + disconnect)
             pass
 
@@ -107,7 +140,7 @@ class HoneyPotCommand(object):
         """
         """
         log.msg('Received CTRL-C, exiting..')
-        self.write('^C\n')
+        self.write(b'^C\n')
         self.exit()
 
 
@@ -116,7 +149,9 @@ class HoneyPotCommand(object):
         """
         log.msg('QUEUED INPUT: {}'.format(line))
         # FIXME: naive command parsing, see lineReceived below
-        self.protocol.cmdstack[0].cmdpending.append(shlex.split(line))
+        line = b"".join(line)
+        line = line.decode("utf-8")
+        self.protocol.cmdstack[0].cmdpending.append(shlex.split(line,posix=False))
 
 
     def resume(self):
@@ -159,12 +194,22 @@ class HoneyPotShell(object):
         """
         """
         log.msg(eventid='cowrie.command.input', input=line, format='CMD: %(input)s')
+        line = b"".join(line)
+        line = line.decode("utf-8")
         self.lexer = shlex.shlex(instream=line, punctuation_chars=True)
         tokens = []
         while True:
             try:
                 tok = self.lexer.get_token()
                 # log.msg( "tok: %s" % (repr(tok)) )
+
+                # Ignore parentheses
+                tok_len = len(tok)
+                tok = tok.strip('(')
+                tok = tok.strip(')')
+                if len(tok) != tok_len and tok == '':
+                    continue
+
                 if tok == self.lexer.eof:
                     if len(tokens):
                         self.cmdpending.append((tokens))
@@ -178,7 +223,7 @@ class HoneyPotShell(object):
                         continue
                     else:
                         self.protocol.terminal.write(
-                            '-bash: syntax error near unexpected token `{}\'\n'.format(tok))
+                            b'-bash: syntax error near unexpected token `{}\'\n'.format(tok))
                         break
                 elif tok == '$?':
                     tok = "0"
@@ -202,13 +247,12 @@ class HoneyPotShell(object):
                 tokens.append(tok)
             except Exception as e:
                 self.protocol.terminal.write(
-                    'bash: syntax error: unexpected end of file\n')
+                    b'bash: syntax error: unexpected end of file\n')
                 # Could run runCommand here, but i'll just clear the list instead
                 log.msg( "exception: {}".format(e) )
                 self.cmdpending = []
                 self.showPrompt()
                 return
-
         if len(self.cmdpending):
             self.runCommand()
         else:
@@ -314,7 +358,7 @@ class HoneyPotShell(object):
             else:
                 log.msg(eventid='cowrie.command.failed',
                     input=' '.join(cmd2), format='Command not found: %(input)s')
-                self.protocol.terminal.write('bash: %s: command not found\n' % (cmd['command'],))
+                self.protocol.terminal.write(b'bash: %s: command not found\n' % (cmd['command'],))
                 runOrPrompt()
         if pp:
             self.protocol.call_command(pp, cmdclass, *cmd_array[0]['rargs'])
@@ -349,13 +393,13 @@ class HoneyPotShell(object):
 
         # Example: [root@svr03 ~]#   (More of a "CentOS" feel)
         # Example: root@svr03:~#     (More of a "Debian" feel)
-        prompt = '{}@{}:{}'.format(self.protocol.user.username, self.protocol.hostname, cwd)
+        prompt = self.protocol.user.username.encode()+b'@'+self.protocol.hostname.encode()+b':'+cwd.encode()
         if not self.protocol.user.uid:
-            prompt += '# '    # "Root" user
+            prompt += b'# '    # "Root" user
         else:
-            prompt += '$ '    # "Non-Root" user
+            prompt += b'$ '    # "Non-Root" user
         self.protocol.terminal.write(prompt)
-        self.protocol.ps = (prompt , '> ')
+        self.protocol.ps = (prompt , b'> ')
 
 
     def eofReceived(self):
@@ -372,7 +416,7 @@ class HoneyPotShell(object):
         """
         self.protocol.lineBuffer = []
         self.protocol.lineBufferIndex = 0
-        self.protocol.terminal.write('\n')
+        self.protocol.terminal.write(b'\n')
         self.showPrompt()
 
 
@@ -443,17 +487,17 @@ class HoneyPotShell(object):
             first = l.split(' ')[:-1]
             newbuf = ' '.join(first + ['%s%s' % (basedir, prefix)])
             if newbuf == ''.join(self.protocol.lineBuffer):
-                self.protocol.terminal.write('\n')
+                self.protocol.terminal.write(b'\n')
                 maxlen = max([len(x[fs.A_NAME]) for x in files]) + 1
                 perline = int(self.protocol.user.windowSize[1] / (maxlen + 1))
                 count = 0
                 for file in files:
                     if count == perline:
                         count = 0
-                        self.protocol.terminal.write('\n')
+                        self.protocol.terminal.write(b'\n')
                     self.protocol.terminal.write(file[fs.A_NAME].ljust(maxlen))
                     count += 1
-                self.protocol.terminal.write('\n')
+                self.protocol.terminal.write(b'\n')
                 self.showPrompt()
 
         self.protocol.lineBuffer = list(newbuf)
@@ -507,7 +551,8 @@ class StdOutStdErrEmulationProtocol(object):
     def errReceived(self, data):
         """
         """
-        self.protocol.terminal.write(data)
+        if self.protocol and self.protocol.terminal:
+            self.protocol.terminal.write(data)
         self.err_data = self.err_data + data
 
 

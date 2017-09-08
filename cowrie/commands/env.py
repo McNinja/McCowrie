@@ -1,4 +1,6 @@
 
+from __future__ import division, absolute_import
+
 from twisted.internet import reactor
 
 from cowrie.core.honeypot import HoneyPotCommand
@@ -36,7 +38,7 @@ class command_env(HoneyPotCommand):
         """
         """
         for i in list(self.environ.keys()):
-            self.write("%s=%s\n" % (i,self.environ[i]))
+            self.write(b"%s=%s\n" % (i,self.environ[i]))
 
 
 commands['/usr/bin/env'] = command_env

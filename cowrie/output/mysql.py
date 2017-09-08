@@ -3,6 +3,8 @@
 MySQL output connector. Writes audit logs to MySQL database
 """
 
+from __future__ import division, absolute_import
+
 import MySQLdb
 
 from twisted.internet import defer
@@ -55,7 +57,7 @@ class Output(cowrie.core.output.Output):
         docstring here
         """
         if self.cfg.has_option('output_mysql', 'debug'):
-            self.debug = self.cfg.getbool('output_mysql', 'debug')
+            self.debug = self.cfg.getboolean('output_mysql', 'debug')
 
         if self.cfg.has_option('output_mysql', 'port'):
             port = int(self.cfg.get('output_mysql', 'port'))
@@ -72,8 +74,6 @@ class Output(cowrie.core.output.Output):
                 cp_max = 1)
         except MySQLdb.Error as e:
             log.msg("output_mysql: Error %d: %s" % (e.args[0], e.args[1]))
-
-        self.db.start()
 
 
     def stop(self):
@@ -157,7 +157,14 @@ class Output(cowrie.core.output.Output):
                 (entry["session"], entry["timestamp"], '%Y-%m-%dT%H:%i:%s.%fZ',
                 entry['url'], entry['outfile'], entry['shasum']))
 
-        elif entry["eventid"] == 'cowrie.session.file_download':
+        elif entry["eventid"] == 'cowrie.session.file_upload':
+            self.simpleQuery('INSERT INTO `downloads`' + \
+                ' (`session`, `timestamp`, `url`, `outfile`, `shasum`)' + \
+                ' VALUES (%s, STR_TO_DATE(%s, %s), %s, %s)',
+                (entry["session"], entry["timestamp"], '%Y-%m-%dT%H:%i:%s.%fZ',
+                '', entry['outfile'], entry['shasum']))
+
+        elif entry["eventid"] == 'cowrie.session.input':
             self.simpleQuery('INSERT INTO `input`' + \
                 ' (`session`, `timestamp`, `realm`, `input`)' + \
                 ' VALUES (%s, STR_TO_DATE(%s, %s), %s , %s)',

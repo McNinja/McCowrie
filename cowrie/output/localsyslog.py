@@ -26,6 +26,8 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
+from __future__ import division, absolute_import
+
 import syslog
 import twisted.python.syslog
 
@@ -60,7 +62,11 @@ class Output(cowrie.core.output.Output):
         """
         """
         if self.format == 'cef':
-            self.syslog.emit(cowrie.core.cef.formatCef(logentry))
+            self.syslog.emit({
+                'message': cowrie.core.cef.formatCef(logentry),
+                'isError': False,
+                'system': 'cowrie'
+            })
         else:
             # message appears with additional spaces if message key is defined
             logentry['message'] = [ logentry['message'] ]

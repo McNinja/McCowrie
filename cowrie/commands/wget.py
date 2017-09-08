@@ -1,21 +1,18 @@
 # Copyright (c) 2009 Upi Tamminen <desaster@gmail.com>
 # See the COPYRIGHT file for more information
 
+from __future__ import division, absolute_import
+
 import time
 import re
 import os
 import getopt
 import hashlib
-try:
-    from urllib.parse import urlparse
-except ImportError:
-    from urlparse import urlparse
-
 from OpenSSL import SSL
 
 from twisted.web import client
 from twisted.internet import reactor, ssl
-from twisted.python import log
+from twisted.python import log, compat
 
 from cowrie.core.honeypot import HoneyPotCommand
 from cowrie.core.fs import *
@@ -96,7 +93,8 @@ class command_wget(HoneyPotCommand):
         if '://' not in url:
             url = 'http://%s' % url
 
-        urldata = urlparse(url)
+        urldata = compat.urllib_parse.urlparse(url)
+        url = bytes(url)
 
         if outfile is None:
             outfile = urldata.path.split('/')[-1]
@@ -121,10 +119,14 @@ class command_wget(HoneyPotCommand):
 
         self.download_path = cfg.get('honeypot', 'download_path')
 
-        self.safeoutfile = '%s/%s_%s' % \
-            (self.download_path,
-            time.strftime('%Y%m%d%H%M%S'),
-            re.sub('[^A-Za-z0-9]', '_', url))
+        if not hasattr(self, 'safeoutfile'):
+            tmp_fname = '%s_%s_%s_%s' % \
+                        (time.strftime('%Y%m%d%H%M%S'),
+                         self.protocol.getProtoTransport().transportId,
+                         self.protocol.terminal.transport.session.id,
+                         re.sub('[^A-Za-z0-9]', '_', url))
+            self.safeoutfile = os.path.join(self.download_path, tmp_fname)
+
         self.deferred = self.download(url, outfile, self.safeoutfile)
         if self.deferred:
             self.deferred.addCallback(self.success, outfile)
@@ -135,13 +137,16 @@ class command_wget(HoneyPotCommand):
         """
         """
         try:
-            parsed = urlparse(url)
+            parsed = compat.urllib_parse.urlparse(url)
             scheme = parsed.scheme
             host = parsed.hostname
             port = parsed.port or (443 if scheme == 'https' else 80)
             path = parsed.path or '/'
             if scheme != 'http' and scheme != 'https':
                 raise NotImplementedError
+            if not host:
+                self.exit()
+                return None
         except:
             self.write('%s: Unsupported scheme.\n' % (url,))
             self.exit()
@@ -185,8 +190,9 @@ class command_wget(HoneyPotCommand):
             log.msg("there's no file " + self.safeoutfile)
             self.exit()
 
-        shasum = hashlib.sha256(open(self.safeoutfile, 'rb').read()).hexdigest()
-        hash_path = '%s/%s' % (self.download_path, shasum)
+        with open(self.safeoutfile, 'rb') as f:
+            shasum = hashlib.sha256(f.read()).hexdigest()
+            hash_path = os.path.join(self.download_path, shasum)
 
         # If we have content already, delete temp file
         if not os.path.exists(hash_path):
@@ -196,26 +202,19 @@ class command_wget(HoneyPotCommand):
             log.msg("Not storing duplicate content " + shasum)
 
         self.protocol.logDispatch(eventid='cowrie.session.file_download',
-            format='Downloaded URL (%(url)s) with SHA-256 %(shasum)s to %(outfile)s',
-            url=self.url,
-            outfile=hash_path,
-            shasum=shasum )
-
-        log.msg(eventid='cowrie.session.file_download',
-                format='Downloaded URL (%(url)s) with SHA-256 %(shasum)s to %(outfile)s',
-                url=self.url,
-                outfile=hash_path,
-                shasum=shasum)
+                                  format='Downloaded URL (%(url)s) with SHA-256 %(shasum)s to %(outfile)s',
+                                  url=self.url,
+                                  outfile=hash_path,
+                                  shasum=shasum)
 
         # Link friendly name to hash
-        os.symlink( shasum, self.safeoutfile )
+        # os.symlink(shasum, self.safeoutfile)
 
-        # FIXME: is this necessary?
-        self.safeoutfile = hash_path
+        self.safeoutfile = None
 
         # Update the honeyfs to point to downloaded file
-        f = self.fs.getfile(outfile)
-        f[A_REALFILE] = hash_path
+        self.fs.update_realfile(self.fs.getfile(outfile), hash_path)
+        self.fs.chown(outfile, self.protocol.user.uid, self.protocol.user.gid)
         self.exit()
 
 
@@ -239,7 +238,7 @@ commands['/usr/bin/dget'] = command_wget
 class HTTPProgressDownloader(client.HTTPDownloader):
     def __init__(self, wget, fakeoutfile, url, outfile, headers=None):
         client.HTTPDownloader.__init__(self, url, outfile, headers=headers,
-            agent='Wget/1.11.4')
+            agent=b'Wget/1.11.4')
         self.status = None
         self.wget = wget
         self.fakeoutfile = fakeoutfile

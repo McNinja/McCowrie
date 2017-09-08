@@ -6,9 +6,13 @@
 This module contains ...
 """
 
+from __future__ import division, absolute_import
+
 import os
+import sys
 import time
 import socket
+import traceback
 
 from twisted.python import failure, log
 from twisted.internet import error
@@ -47,9 +51,13 @@ class HoneyPotBaseProtocol(insults.TerminalProtocol, TimeoutMixin):
         self.commands = {}
         import cowrie.commands
         for c in cowrie.commands.__all__:
-            module = __import__('cowrie.commands.%s' % (c,),
-                globals(), locals(), ['commands'])
-            self.commands.update(module.commands)
+            try:
+                module = __import__('cowrie.commands.%s' % (c,),
+                    globals(), locals(), ['commands'])
+                self.commands.update(module.commands)
+            except Exception as e:
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                log.err("Failed to import command {}: {}: {}".format(c, e, ''.join(traceback.format_exception(exc_type,exc_value,exc_traceback))))
         self.password_input = False
         self.cmdstack = []
 
@@ -80,7 +88,12 @@ class HoneyPotBaseProtocol(insults.TerminalProtocol, TimeoutMixin):
         self.realClientPort = pt.transport.getPeer().port
         self.clientVersion = self.getClientVersion()
         self.logintime = time.time()
-        self.setTimeout(1800)
+
+        try:
+            timeout = self.cfg.getint('honeypot', 'interactive_timeout')
+        except:
+            timeout = 180
+        self.setTimeout(timeout)
 
         # Source IP of client in user visible reports (can be fake or real)
         try:
@@ -120,6 +133,9 @@ class HoneyPotBaseProtocol(insults.TerminalProtocol, TimeoutMixin):
 
     def connectionLost(self, reason):
         """
+        Called when the connection is shut down.
+        Clear any circular references here, and any external references to
+        this Protocol. The connection has been closed.
         """
         self.setTimeout(None)
         insults.TerminalProtocol.connectionLost(self, reason)
@@ -127,9 +143,11 @@ class HoneyPotBaseProtocol(insults.TerminalProtocol, TimeoutMixin):
         del self.cmdstack
         del self.commands
         self.fs = None
+        self.pp = None
         self.cfg = None
         self.user = None
-        log.msg("honeypot terminal protocol connection lost {}".format(reason))
+        self.environ = None
+        #log.msg("honeypot terminal protocol connection lost {}".format(reason))
 
 
     def txtcmd(self, txt):
@@ -177,7 +195,8 @@ class HoneyPotBaseProtocol(insults.TerminalProtocol, TimeoutMixin):
         """
         Line Received
         """
-        self.resetTimeout()
+        # Turn idle timeout into time-based timout by commenting out reset
+        #self.resetTimeout()
         if len(self.cmdstack):
             self.cmdstack[-1].lineReceived(line)
 
@@ -190,7 +209,9 @@ class HoneyPotBaseProtocol(insults.TerminalProtocol, TimeoutMixin):
         obj.set_input_data(pp.input_data)
         self.cmdstack.append(obj)
         obj.start()
-        self.pp.outConnectionLost()
+
+        if self.pp:
+            self.pp.outConnectionLost()
 
 
     def uptime(self):
@@ -246,9 +267,6 @@ class HoneyPotInteractiveProtocol(HoneyPotBaseProtocol, recvline.HistoricRecvLin
 
         self.cmdstack = [honeypot.HoneyPotShell(self)]
 
-        pt = self.getProtoTransport()
-        pt.factory.sessions[pt.transport.sessionno] = self
-
         self.keyHandlers.update({
             '\x01':     self.handle_HOME,	# CTRL-A
             '\x02':     self.handle_LEFT,	# CTRL-B
@@ -282,7 +300,7 @@ class HoneyPotInteractiveProtocol(HoneyPotBaseProtocol, recvline.HistoricRecvLin
         """
         this logs out when connection times out
         """
-        self.terminal.write( 'timed out waiting for input: auto-logout\n' )
+        self.terminal.write( b'timed out waiting for input: auto-logout\n' )
         HoneyPotBaseProtocol.timeoutConnection(self)
 
 
@@ -303,10 +321,6 @@ class HoneyPotInteractiveProtocol(HoneyPotBaseProtocol, recvline.HistoricRecvLin
     def connectionLost(self, reason):
         """
         """
-        pt = self.getProtoTransport()
-        if pt.transport.sessionno in pt.factory.sessions:
-            del pt.factory.sessions[pt.transport.sessionno]
-
         self.lastlogExit()
         HoneyPotBaseProtocol.connectionLost(self, reason)
         recvline.HistoricRecvLine.connectionLost(self, reason)
@@ -354,19 +368,22 @@ class HoneyPotInteractiveProtocol(HoneyPotBaseProtocol, recvline.HistoricRecvLin
     def handle_CTRL_C(self):
         """
         """
-        self.cmdstack[-1].handle_CTRL_C()
+        if len(self.cmdstack):
+            self.cmdstack[-1].handle_CTRL_C()
 
 
     def handle_CTRL_D(self):
         """
         """
-        self.cmdstack[-1].handle_CTRL_D()
+        if len(self.cmdstack):
+            self.cmdstack[-1].handle_CTRL_D()
 
 
     def handle_TAB(self):
         """
         """
-        self.cmdstack[-1].handle_TAB()
+        if len(self.cmdstack):
+            self.cmdstack[-1].handle_TAB()
 
 
     def handle_CTRL_K(self):
